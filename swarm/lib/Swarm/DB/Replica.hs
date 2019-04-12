@@ -1,27 +1,45 @@
+{-# OPTIONS -Wno-unused-imports #-}
+
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Swarm.DB.Replica (
     TextReplica,
+    createBranch,
+    createObject,
     createReplica,
+    getObject,
     newTextReplica,
     open,
-    receive,
 ) where
 
+import           RON.Prelude
+
 import           Control.Exception (mask_)
+import           Control.Monad.Trans.Resource (MonadResource, allocate)
 import           Data.ByteString (ByteString)
+import           Data.ByteString.Lazy (toStrict)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy)
-import           Foreign (FinalizerPtr, ForeignPtr, newForeignPtr)
+import           Foreign (FinalizerPtr, ForeignPtr, Ptr, newForeignPtr)
 import           Language.C.Inline.Context (ctxTypesTable)
 import qualified Language.C.Inline.Cpp as Cpp
 import           Language.C.Types (TypeSpecifier (TypeName))
+import           Named ((:!), pattern Arg)
 
-import           RON.UUID (UUID (UUID))
+import           RON.Text (serializeWireFrame)
+import           RON.Types (ClosedOp (ClosedOp), Op (Op),
+                            WireChunk (Closed, Query),
+                            WireReducedChunk (WireReducedChunk), objectId, op,
+                            opId, payload, reducerId, refId, wrcBody, wrcHeader)
+import           RON.UUID (UUID (UUID), zero)
 
 import           Cxx.Std (stdCtx)
 import qualified Cxx.Std.String as String
@@ -30,7 +48,7 @@ import qualified Swarm.RON.Status as Status
 import           Swarm.RON.Text (TextFrame)
 
 -- | Class @ron::Replica<TextFrame>@
-newtype TextReplica = TextReplica (ForeignPtr (Proxy TextReplica))
+newtype TextReplica = TextReplica (Ptr (Proxy TextReplica))
 
 Cpp.context
     $   Cpp.cppCtx
@@ -55,48 +73,59 @@ Cpp.verbatim "typedef ron::TextFrame TextFrame;"
 Cpp.verbatim "typedef ron::Uuid Uuid;"
 Cpp.verbatim "typedef std::string std_string;"
 
--- Cpp.verbatim "extern \"C\" void deleteTextFrame(TextFrame * p) { delete p; }"
--- foreign import ccall "&deleteTextFrame"
---     deleteTextFrame :: FinalizerPtr (Proxy TextFrame)
-
-Cpp.verbatim
-    "extern \"C\" void deleteTextReplica(TextReplica * p) { delete p; }"
-foreign import ccall "&deleteTextReplica"
-    deleteTextReplica :: FinalizerPtr (Proxy TextReplica)
-
 -- | Method @Status CreateReplica()@
 createReplica :: TextReplica -> IO Status
 createReplica (TextReplica replica) =
     Status.decoding_ $ \statusPtr -> [Cpp.block| void {
-        * $(Status * statusPtr) =
-            $fptr-ptr:(TextReplica * replica)->CreateReplica();
+        * $(Status * statusPtr) = $(TextReplica * replica)->CreateReplica();
     } |]
 
 -- | Method @Status Open()@
 open :: TextReplica -> IO Status
 open (TextReplica replica) =
     Status.decoding_ $ \statusPtr -> [Cpp.block| void {
-        * $(Status * statusPtr) = $fptr-ptr:(TextReplica * replica)->Open();
+        * $(Status * statusPtr) = $(TextReplica * replica)->Open();
     } |]
 
--- | Method @Status Receive(Builder& response, Cursor& query)@
-receive
-    :: UUID  -- ^ object id
-    -> UUID  -- ^ type
+-- | Method @Status GetObject(Frame& frame, Uuid id, Uuid rdt)@
+getObject
+    :: "object" :! UUID
+    -> "type"   :! UUID
+    -> "yarn"   :! Word64
     -> TextReplica
     -> IO (Either Status ByteString)
-receive (UUID objectIdX objectIdY) (UUID rdtX rdtY) (TextReplica replicaPtr) =
+getObject (Arg object) (Arg typ) = receiveFrame query where
+    query =
+        toStrict $
+        serializeWireFrame
+            [Query $ WireReducedChunk
+                { wrcHeader = ClosedOp
+                    { reducerId = zero
+                    , objectId = zero
+                    , op = Op{opId = object, refId = typ, payload = []}
+                    }
+                , wrcBody = []
+                }]
+
+-- | Method @Status ReceiveFrame(Builder& response, Frame frame)@
+receiveFrame
+    :: ByteString
+    -> "yarn" :! Word64
+    -> TextReplica
+    -> IO (Either Status ByteString)
+receiveFrame frame (Arg yarn) (TextReplica replicaPtr) =
     Status.with $ \statusPtr ->
     String.with $ \resultDataPtr -> do
         [Cpp.block| void {
             Status & status = * $(Status * statusPtr);
             TextFrame::Builder result;
-            TextFrame query = ron::Query<TextFrame>(
-                Uuid{$(uint64_t objectIdX), $(uint64_t objectIdY)},
-                Uuid{$(uint64_t rdtX     ), $(uint64_t rdtY     )}
-            );
-            TextFrame::Cursor qc{query};
-            status = $fptr-ptr:(TextReplica * replicaPtr)->Receive(result, qc);
+            status =
+                $(TextReplica * replicaPtr)
+                ->ReceiveFrame(
+                    result,
+                    TextFrame{std::string($bs-ptr:frame, $bs-len:frame)},
+                    $(uint64_t yarn)
+                );
             if (status)
                 * $(std_string * resultDataPtr) = result.data();
         } |]
@@ -106,25 +135,36 @@ receive (UUID objectIdX objectIdY) (UUID rdtX rdtY) (TextReplica replicaPtr) =
                 Right <$> String.decode resultDataPtr
             _ -> pure $ Left status
 
--- withTextFrame :: (Ptr (Proxy TextFrame) -> IO a) -> IO a
--- withTextFrame = bracket
---     [Cpp.exp| TextFrame * { new TextFrame } |]
---     (\p -> [Cpp.block| void { delete $(TextFrame * p); } |])
+newTextReplica :: MonadResource m => m TextReplica
+newTextReplica =
+    snd <$>
+    allocate
+        (TextReplica <$> [Cpp.exp| TextReplica * { new TextReplica } |])
+        (\(TextReplica p) -> [Cpp.block| void { delete $(TextReplica * p); } |])
 
--- withTextReplica :: (TextReplica -> IO a) -> IO a
--- withTextReplica = bracket
---     (TextReplica <$> [Cpp.exp| TextReplica * { new TextReplica } |])
---     (\(TextReplica p) -> [Cpp.block| void { delete $(TextReplica * p); } |])
+createObject
+    :: "type" :! UUID
+    -> "yarn" :! Word64
+    -> TextReplica
+    -> IO (Either Status ())
+createObject _typ yarn replica =
+    receiveFrame frameIn yarn replica >>= \case
+        Left errorStatus -> pure $ Left errorStatus
+        Right frameOut   -> error $ "frameOut = " <> show frameOut
+  where
+    frameIn = "@1+0 :rga ;"
+        -- toStrict $
+        -- serializeWireFrame
+        --     [Closed ClosedOp
+        --         { reducerId = zero
+        --         , objectId = zero
+        --         , op = Op{opId = zero, refId = typ, payload = []}
+        --         }]
 
--- newForeignTextFrame :: IO (ForeignPtr (Proxy TextFrame))
--- newForeignTextFrame = mask_ $ do
---     p <- [Cpp.exp| TextFrame * { new TextFrame } |]
---     newForeignPtr deleteTextFrame p
-
-newForeignTextReplica :: IO (ForeignPtr (Proxy TextReplica))
-newForeignTextReplica = mask_ $ do
-    p <- [Cpp.exp| TextReplica * { new TextReplica } |]
-    newForeignPtr deleteTextReplica p
-
-newTextReplica :: IO TextReplica
-newTextReplica = TextReplica <$> newForeignTextReplica
+-- | Method @Status CreateBranch(Word yarn_id)@
+createBranch :: "yarn" :! Word64 -> TextReplica -> IO Status
+createBranch (Arg yarn) (TextReplica replicaPtr) =
+    Status.decoding_ $ \statusPtr -> [Cpp.block| void {
+        * $(Status * statusPtr) =
+            $(TextReplica * replicaPtr)->CreateBranch($(uint64_t yarn));
+    } |]

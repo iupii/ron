@@ -16,6 +16,8 @@ module Swarm.RON.Status (
     notOpen,
 ) where
 
+import           RON.Prelude
+
 import           Control.Exception (bracket)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
