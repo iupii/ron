@@ -28,6 +28,7 @@ module RON.Schema (
     TComposite (..),
     TEnum (..),
     TObject (..),
+    Tuple (..),
     TypeExpr (..),
     TypeName,
     UseType,
@@ -41,7 +42,23 @@ data Stage = Parsed | Resolved | Equipped
 
 type TypeName = Text
 
-data TypeExpr = Use TypeName | Apply TypeName [TypeExpr]
+-- | At least 2 items
+data Tuple a = Tuple a a [a]
+    deriving (Show)
+
+instance Functor Tuple where
+    fmap f ~(Tuple x y zs) = Tuple (f x) (f y) (fmap f zs)
+
+instance Foldable Tuple where
+    fold        ~(Tuple x y zs) =   x <>   y <> fold        zs
+    foldMap f   ~(Tuple x y zs) = f x <> f y <> foldMap f   zs
+    foldr   f i ~(Tuple x y zs) = f x $  f y $  foldr   f i zs
+    toList      ~(Tuple x y zs) =   x :    y :              zs
+
+data TypeExpr
+    = Use TypeName
+    | Apply TypeName [TypeExpr]
+    | TupleExpr (Tuple TypeExpr)
     deriving (Show)
 
 data TAtom = TAFloat | TAInteger | TAString | TAUuid
@@ -57,6 +74,7 @@ data RonType
 data TComposite
     = TEnum   TEnum
     | TOption RonType
+    | TTuple  (Tuple RonType)
     deriving (Show)
 
 data TEnum = Enum {name :: Text, items :: [Text]}

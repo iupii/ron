@@ -74,6 +74,16 @@ instance ReplicatedAsPayload Opaque49 where
     (alias Alias69 (ORSet Struct51))
 
     (alias Alias75 (ORSet.Map String String))
+
+    (alias Alias77 [Struct51 Enum67])
+
+    (alias Alias79 (ORSet [Struct51 Enum67]))
+
+    (struct_lww Struct81
+        tup76 [Struct81 Struct81]
+        tup77 [Struct81 Struct81 Struct81]
+        tup78 [[Struct81 Struct81] Struct81]
+        tup78 [[Struct81 [Struct81 Struct81]] Struct81])
 |]
 
 deriving instance Eq   Struct51

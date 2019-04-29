@@ -13,9 +13,8 @@ module RON.Schema.EDN (readSchema) where
 
 import           RON.Prelude
 
-import           Control.Arrow ((&&&))
-import           Data.EDN (FromEDN, Tagged (NoTag, Tagged), TaggedValue,
-                           Value (List, Symbol), mapGetSymbol, parseEDN,
+import           Data.EDN (FromEDN, Tagged (NoTag, Tagged),
+                           Value (List, Symbol, Vec), mapGetSymbol, parseEDN,
                            renderText, unexpected, withList, withMap, withNoTag)
 import           Data.EDN.Class.Parser (Parser, parseM)
 import           Data.EDN.Extra (decodeMultiDoc, isTagged, parseList,
@@ -192,6 +191,14 @@ instance FromEDN TypeExpr where
                     Use typ -> pure $ Apply typ args
                     Apply{} ->
                         fail "type function must be a name, not expression"
+                    TupleExpr _ -> undefined
+        Vec values -> case toList values of
+            v0 : v1 : vs -> do
+                e0 <-          parseEDN v0
+                e1 <-          parseEDN v1
+                es <- traverse parseEDN vs
+                pure $ TupleExpr $ Tuple e0 e1 es
+            _ -> fail "expected 2 or more types"
         value -> value `unexpected` "type symbol or expression"
 
 collectDeclarations :: (MonadFail m, MonadState Env m) => Schema 'Parsed -> m ()
@@ -307,6 +314,7 @@ evalSchema env = fst <$> userTypes' where
             Type0 t0   -> t0
             _          -> error "type arity mismatch"
         Apply typ args -> applyType typ $ evalType <$> args
+        TupleExpr t    -> TComposite . TTuple $ fmap evalType t
 
     applyType name args = case getType name of
         Type0 _  -> error "type arity mismatch"
