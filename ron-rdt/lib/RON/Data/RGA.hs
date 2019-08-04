@@ -339,7 +339,7 @@ instance Replicated a => ReplicatedAsObject (RGA a) where
             _    -> pure Nothing
         pure . RGA $ catMaybes mItems
 
-    -- rempty = RGA []
+    rempty = RGA []
 
 -- | Replace content of the RGA throug introducing changes detected by
 -- 'getGroupedDiffBy'.

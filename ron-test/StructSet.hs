@@ -8,13 +8,12 @@ module StructSet (prop_structSet) where
 import           RON.Prelude
 
 import qualified Data.ByteString.Lazy.Char8 as BSLC
-import           Data.Default (def)
 import qualified Data.Map.Strict as Map
 import           Hedgehog (MonadTest, Property, annotate, evalEither,
                            evalExceptT, failure, property, (===))
 
 import           RON.Data (evalObjectState, execObjectState, getObject,
-                           newObjectFrame)
+                           newObjectFrame, rempty)
 import           RON.Data.ORSet (ORSet (ORSet))
 import qualified RON.Data.ORSet as ORSet
 import           RON.Data.RGA (RGA (RGA))
@@ -33,13 +32,10 @@ import           String (s)
 import           StructSet.Types
 
 example0 :: StructSet13
-example0 = StructSet13
+example0 = rempty
     { int1 = Just 275
-    , str2 = Just $ RGA "275"
+    , str2 = RGA "275"
     , str3 = Just "190"
-    , set4 = Just $ ORSet []
-    , opt5 = Nothing
-    , nst6 = Nothing
     }
 
 -- | "r3pl1c4"
@@ -107,14 +103,13 @@ state4expect = [s|
     |]
 
 example4expect :: StructSet13
-example4expect = StructSet13
+example4expect = rempty
     { int1 = Just 166
-    , str2 = Just $ RGA "145"
+    , str2 = RGA "145"
     , str3 = Just "206"
-    , set4 = Just $
-        ORSet [def{int1 = Just 135, str2 = Just $ RGA "136", str3 = Just "137"}]
-    , opt5 = Nothing
-    , nst6 = Just def{int1 = Just 138}
+    , set4 = ORSet
+        [rempty{int1 = Just 135, str2 = RGA "136", str3 = Just "137"}]
+    , nst6 = rempty{int1 = Just 138}
     }
 
 prop_structSet :: Property
@@ -138,27 +133,28 @@ prop_structSet = property $ do
         runNetworkSimT $ runReplicaSimT replica $
         execObjectState state2 $ do
             checkCausality
-            int1_assign 166 -- plain field
+            int1_assign $ Just 166  -- plain field
             checkCausality
             str2_zoom $ RGA.edit "145"
             checkCausality
             do  value <- str3_read
                 value === Just "190"
-            str3_assign "206"
+            str3_assign $ Just "206"
             checkCausality
             set4_zoom $ do
                 ORSet.addValue
-                    def { int1 = Just 135
-                        , str2 = Just $ RGA "136"
+                    rempty
+                        { int1 = Just 135
+                        , str2 = RGA "136"
                         , str3 = Just "137"
                         }
                 checkCausality
             checkCausality
             do  value <- opt5_read
-                value === Nothing
+                value === rempty
             do  value <- nst6_read
-                value === Nothing
-            nst6_assign def{int1 = Just 138}
+                value === rempty
+            nst6_assign rempty{int1 = Just 138}
             checkCausality
 
     -- decode object after modification

@@ -84,4 +84,4 @@ instance ReplicatedAsObject VersionVector where
         StateChunk{stateBody} <- getObjectStateChunk
         pure $ stateFromChunk stateBody
 
-    -- rempty = mempty
+    rempty = mempty

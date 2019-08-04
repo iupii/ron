@@ -2,6 +2,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -31,6 +32,7 @@ module RON.Schema (
     TypeExpr (..),
     TypeName,
     UseType,
+    isObjectType,
 ) where
 
 import           RON.Prelude
@@ -168,3 +170,9 @@ data MergeStrategy
     | Min
     | Set
     deriving (Show)
+
+isObjectType :: RonType -> Bool
+isObjectType = \case
+    TObject _                -> True
+    TOpaque Opaque{isObject} -> isObject
+    _                        -> False

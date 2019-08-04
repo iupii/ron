@@ -126,7 +126,7 @@ instance Replicated a => ReplicatedAsObject (ORSet a) where
             _    -> pure Nothing
         pure . ORSet $ catMaybes mItems
 
-    -- rempty = ORSet []
+    rempty = ORSet []
 
 -- | XXX Internal. Common implementation of 'addValue' and 'addRef'.
 commonAdd :: (MonadE m, MonadObjectState a m, ReplicaClock m) => Payload -> m ()
@@ -234,9 +234,9 @@ type ORSetMap k v = ORSet (k, v)
 
 -- | Assign a value to a field
 assignField
-    :: (Replicated field, ReplicaClock m, MonadE m, MonadObjectState struct m)
-    => UUID   -- ^ Field name
-    -> field  -- ^ Value
+    :: (Replicated a, ReplicaClock m, MonadE m, MonadObjectState struct m)
+    => UUID  -- ^ Field name
+    -> a     -- ^ Value
     -> m ()
 assignField field value =
     modifyObjectStateChunk_ $ \StateChunk{stateBody} -> do
@@ -279,19 +279,19 @@ filterAliveFieldIdsAndPayloads field ops =
     , field' == field
     ]
 
--- | Decode field value, merge all versions, return 'Nothing' if no versions
+-- | Decode field value, merge all versions, return 'rempty' if no versions
 viewField
     :: (MonadE m, MonadState StateFrame m, ReplicatedAsObject a)
     => UUID        -- ^ Field name
     -> StateChunk  -- ^ ORSet object chunk
-    -> m (Maybe a)
+    -> m a
 viewField field StateChunk{stateBody} =
     errorContext "ORSet.viewField" $ do
         let payloads = filterAliveFieldPayloads field stateBody
             refs = [ref | AUuid ref : _ <- payloads]
         case refs of
-            []   -> pure Nothing
-            p:ps -> fmap Just . rconcat $ p :| ps
+            []   -> pure rempty
+            p:ps -> rconcat $ p :| ps
 
 -- | Decode field value, keep last version only
 viewFieldLWW

@@ -10,7 +10,7 @@ import qualified Data.ByteString.Lazy.Char8 as BSLC
 import           Hedgehog (Property, evalEither, evalExceptT, property, (===))
 
 import           RON.Data (evalObjectState, execObjectState, getObject,
-                           newObjectFrame)
+                           newObjectFrame, rempty)
 import           RON.Data.ORSet (ORSet (ORSet))
 import qualified RON.Data.ORSet as ORSet
 import           RON.Data.RGA (RGA (RGA))
@@ -30,10 +30,10 @@ import           String (s)
 example0 :: Struct51
 example0 = Struct51
     { int1 = Just 275
-    , str2 = Just $ RGA "275"
+    , str2 = RGA "275"
     , str3 = Just "190"
-    , set4 = Just $ ORSet []
-    , opt5 = Nothing
+    , set4 = ORSet []
+    , opt5 = rempty
     , opt6 = Just 74
     }
 
@@ -98,21 +98,12 @@ ex4expect = [s|
     |]
 
 example4expect :: Struct51
-example4expect = Struct51
+example4expect = rempty
     { int1 = Just 166
-    , str2 = Just $ RGA "145"
+    , str2 = RGA "145"
     , str3 = Just "206"
-    , set4 = Just $ ORSet
-        [Struct51
-            { int1 = Just 135
-            , str2 = Just $ RGA "136"
-            , str3 = Just "137"
-            , set4 = Just $ ORSet []
-            , opt5 = Nothing
-            , opt6 = Nothing
-            }]
-    , opt5 = Nothing
-    , opt6 = Nothing
+    , set4 =
+        ORSet [rempty{int1 = Just 135, str2 = RGA "136", str3 = Just "137"}]
     }
 
 prop_lwwStruct :: Property
@@ -144,16 +135,9 @@ prop_lwwStruct = property $ do
             str3_assign $ Just "206"
             set4_zoom $
                 ORSet.addValue
-                    Struct51
-                        { int1 = Just 135
-                        , str2 = Just $ RGA "136"
-                        , str3 = Just "137"
-                        , set4 = Just $ ORSet []
-                        , opt5 = Nothing
-                        , opt6 = Nothing
-                        }
+                    rempty{int1 = Just 135, str2 = RGA "136", str3 = Just "137"}
             opt5Value <- opt5_read
-            opt5Value === Nothing
+            opt5Value === rempty
             opt6Value <- opt6_read
             opt6Value === Just 74
             opt6_assign Nothing

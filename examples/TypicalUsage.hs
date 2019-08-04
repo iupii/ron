@@ -24,5 +24,5 @@ main = do
     h <- Storage.newHandle dataDir
     runStorage h $ do
         obj <- newObjectFrame
-            Note{active = Just True, text = Just $ RGA "Write a task manager"}
+            Note{active = Just True, text = RGA "Write a task manager"}
         createDocument obj

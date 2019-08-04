@@ -9,6 +9,7 @@ and this project adheres to
 ### Added
 - Function `reduceState`
 - Function `reduceObjectStates`
+- Method `ReplicatedAsObject.rempty`
 
 ### Changed
 - `Reducible` depends on `BoundedSemilattice`.

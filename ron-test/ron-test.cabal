@@ -12,7 +12,6 @@ library
     import: language
     build-depends:
         -- global
-        data-default,
         hedgehog,
         mtl,
         text,
@@ -55,7 +54,6 @@ test-suite test
         -- global
         bytestring,
         containers,
-        data-default,
         directory,
         hedgehog,
         mtl,

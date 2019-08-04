@@ -228,7 +228,7 @@ class (Reducible (Rep a), Replicated a) => ReplicatedAsObject a where
     getObject :: (MonadE m, MonadObjectState a m) => m a
 
     -- | Counterpart of 'mempty', but without an explicit 'Semigroup'
-    -- rempty :: a
+    rempty :: a
 
 objectFromRon :: MonadE m => (Object a -> m a) -> Payload -> m a
 objectFromRon handler atoms = case atoms of

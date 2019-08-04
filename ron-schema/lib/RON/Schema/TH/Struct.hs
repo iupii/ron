@@ -27,9 +27,9 @@ import           Language.Haskell.TH (bindS, conT, doE, listE, newName, noBindS,
 import qualified Language.Haskell.TH as TH
 import           Language.Haskell.TH.Syntax (liftData)
 
-import           RON.Data (MonadObjectState, ObjectStateT,
+import           RON.Data (MonadObjectState, ObjectStateT, Rep,
                            Replicated (encoding),
-                           ReplicatedAsObject (Rep, getObject, newObject),
+                           ReplicatedAsObject (getObject, newObject, rempty),
                            getObjectStateChunk, objectEncoding)
 import           RON.Data.LWW (LwwRep)
 import qualified RON.Data.LWW as LWW
@@ -107,7 +107,7 @@ mkDataType Struct{name, fields} =
         []
         Nothing
         [recC name'
-            [ varBangType' haskellName [t| Maybe $(mkGuideType ronType) |]
+            [ varBangType' haskellName $ mkFieldType ronType
             | Field{ronType, ext = XFieldEquipped{haskellName}} <- toList fields
             ]]
         []
@@ -125,14 +125,25 @@ mkInstanceReplicatedAOLww Struct{name, fields} = do
     ops  <- newName "ops"
     vars <- traverse (newNameT . haskellName . ext) fields
     let packFields = listE
-            [ [| ($ronName', Instance <$> $(varE var)) |]
-            | Field{ext = XFieldEquipped{ronName}} <- toList fields
+            [ let
+                mvar
+                    | isObjectType ronType = [| Just $(varE var) |]
+                    | otherwise            = varE var  -- already in Maybe
+                in
+                [| ($ronName', Instance <$> $mvar) |]
+            | Field{ronType, ext = XFieldEquipped{ronName}} <- toList fields
             , let ronName' = liftData ronName
             | var <- toList vars
             ]
         unpackFields =
-            [ bindS (varP var) [| LWW.viewField $ronName' $(varE ops) |]
-            | Field{ext = XFieldEquipped{ronName}} <- toList fields
+            [ bindS (varP var) $ let
+                view = [| LWW.viewField $ronName' $(varE ops) |]
+                in
+                if isObjectType ronType then
+                    [| fromMaybe rempty <$> $view |]
+                else
+                    view
+            | Field{ronType, ext = XFieldEquipped{ronName}} <- toList fields
             , let ronName' = liftData ronName
             | var <- toList vars
             ]
@@ -150,11 +161,19 @@ mkInstanceReplicatedAOLww Struct{name, fields} = do
             $   bindS (varP ops) [| getObjectStateChunk |]
             :   unpackFields
             ++  [noBindS [| pure $consE |]]
+        remptyImpl = recConE name'
+            [ fieldExp' haskellName remptyField
+            | Field{ronType, ext = XFieldEquipped{haskellName}} <- toList fields
+            , let
+                remptyField
+                    | isObjectType ronType = [| rempty  |]
+                    | otherwise            = [| Nothing |]
+            ]
     [d| instance ReplicatedAsObject $type' where
             type Rep $type' = LwwRep
             newObject $consP = Object <$> LWW.newStruct $packFields
             getObject = errorContext $(liftText errCtx) $getObjectImpl
-            -- rempty = $remptyImpl
+            rempty = $remptyImpl
         |]
   where
     name' = mkNameT name
@@ -166,8 +185,13 @@ mkInstanceReplicatedAOSet Struct{name, fields} = do
     ops  <- newName "ops"
     vars <- traverse (newNameT . haskellName . ext) fields
     let packFields = listE
-            [ [| ($ronName', fmap Instance $(varE var)) |]
-            | Field{ext = XFieldEquipped{ronName}} <- toList fields
+            [ let
+                mvar
+                    | isObjectType ronType = [| Just $(varE var) |]
+                    | otherwise            = varE var  -- already in Maybe
+                in
+                [| ($ronName', Instance <$> $mvar) |]
+            | Field{ronType, ext = XFieldEquipped{ronName}} <- toList fields
             , let ronName' = liftData ronName
             | var <- toList vars
             ]
@@ -197,11 +221,19 @@ mkInstanceReplicatedAOSet Struct{name, fields} = do
             $   bindS (varP ops) [| getObjectStateChunk |]
             :   unpackFields
             ++  [noBindS [| pure $consE |]]
+        remptyImpl = recConE name'
+            [ fieldExp' haskellName remptyField
+            | Field{ronType, ext = XFieldEquipped{haskellName}} <- toList fields
+            , let
+                remptyField
+                    | isObjectType ronType = [| rempty  |]
+                    | otherwise            = [| Nothing |]
+            ]
     [d| instance ReplicatedAsObject $type' where
             type Rep $type' = ORSetRep
             newObject $consP = Object <$> ORSet.newStruct $packFields
             getObject = errorContext $(liftText errCtx) $getObjectImpl
-            -- rempty = _
+            rempty = $remptyImpl
         |]
   where
     name' = mkNameT name
@@ -226,22 +258,29 @@ mkAccessorsLww name' field = do
     a <- varT <$> newName "a"
     m <- varT <$> newName "m"
     let assignF =
-            [ sigD assign [t|
-                (ReplicaClock $m, MonadE $m, MonadObjectState $type' $m)
-                => Maybe $guideType -> $m () |]
-            , valDP assign [| LWW.assignField $ronName' |]
+            [ sigD assign
+                [t| (ReplicaClock $m, MonadE $m, MonadObjectState $type' $m)
+                    => $fieldType -> $m () |]
+            , valDP assign $
+                if isObjectType ronType then
+                    [| LWW.assignField $ronName' . Just |]
+                else
+                    [| LWW.assignField $ronName' |]
             ]
         readF =
-            [ sigD read [t|
-                (MonadE $m, MonadObjectState $type' $m)
-                => $m (Maybe $guideType) |]
-            , valDP read [| LWW.readField $ronName' |]
+            [ sigD read
+                [t| (MonadE $m, MonadObjectState $type' $m) => $m $fieldType |]
+            , valDP read $
+                if isObjectType ronType then
+                    [| fromMaybe rempty <$> LWW.readField $ronName' |]
+                else
+                    [| LWW.readField $ronName' |]
             ]
         zoomF =
-            [ sigD zoom [t|
-                MonadE $m
-                => ObjectStateT $guideType $m $a
-                -> ObjectStateT $type'     $m $a |]
+            [ sigD zoom
+                [t| MonadE $m
+                    => ObjectStateT $guideType $m $a
+                    -> ObjectStateT $type'     $m $a |]
             , valDP zoom [| LWW.zoomField $ronName' |]
             ]
     sequenceA $ assignF ++ readF ++ zoomF
@@ -249,6 +288,7 @@ mkAccessorsLww name' field = do
     Field{ronType, ext = XFieldEquipped{haskellName, ronName}} = field
     ronName' = liftData ronName
     type'    = conT name'
+    fieldType = mkFieldType ronType
     guideType = mkGuideType ronType
     assign = mkNameT $ haskellName <> "_assign"
     read   = mkNameT $ haskellName <> "_read"
@@ -259,35 +299,39 @@ mkAccessorsSet name' field = do
     a <- varT <$> newName "a"
     m <- varT <$> newName "m"
     let assignF =
-            [ sigD assign [t|
-                (ReplicaClock $m, MonadE $m, MonadObjectState $type' $m)
-                => $guideType -> $m () |]
-            , valDP assign [| ORSet.assignField $ronName' |]
+            [ sigD assign
+                [t| (ReplicaClock $m, MonadE $m, MonadObjectState $type' $m)
+                    => $fieldType -> $m () |]
+            , valDP assign $
+                if isObjectType ronType then
+                    [| LWW.assignField $ronName' . Just |]
+                else
+                    [| LWW.assignField $ronName' |]
             ]
         readF =
-            [ sigD read [t|
-                (MonadE $m, MonadObjectState $type' $m)
-                => $m (Maybe $guideType) |]
+            [ sigD read
+                [t| (MonadE $m, MonadObjectState $type' $m) => $m $fieldType |]
             , valDP read
                 [| do
                     chunk <- getObjectStateChunk
                     $(orSetViewField mergeStrategy) $ronName' chunk |]
             ]
-        zoomF = case ronType of
-            TObject _ ->
-                [ sigD zoom [t|
-                    (MonadE $m, ReplicaClock $m)
-                    => ObjectStateT $(mkGuideType ronType) $m $a
-                    -> ObjectStateT $type'                 $m $a |]
+        zoomF
+            | isObjectType ronType =
+                [ sigD zoom
+                    [t| (MonadE $m, ReplicaClock $m)
+                        => ObjectStateT $guideType $m $a
+                        -> ObjectStateT $type'     $m $a |]
                 , valDP zoom [| ORSet.zoomFieldObject $ronName' |]
                 ]
-            _ -> []
+            | otherwise = []
     sequenceA $ assignF ++ readF ++ zoomF
   where
     Field{ronType, annotations = FieldAnnotations{mergeStrategy}, ext} = field
     XFieldEquipped{haskellName, ronName} = ext
     ronName' = liftData ronName
     type'    = conT name'
+    fieldType = mkFieldType ronType
     guideType = mkGuideType ronType
     assign = mkNameT $ haskellName <> "_assign"
     read   = mkNameT $ haskellName <> "_read"
@@ -300,3 +344,8 @@ orSetViewField = varE . \case
     Just Max -> 'ORSet.viewFieldMax
     Just Min -> 'ORSet.viewFieldMin
     Just Set -> 'ORSet.viewFieldSet
+
+mkFieldType :: RonType -> TH.TypeQ
+mkFieldType t
+    | isObjectType t = mkGuideType t
+    | otherwise      = [t| Maybe $(mkGuideType t) |]
